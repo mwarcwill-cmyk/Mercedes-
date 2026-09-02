@@ -19,7 +19,6 @@ SPAM_WINDOW = 8  # Seconds
 SPAM_COUNT = 4  # Messages allowed in window
 REPEAT_N = 3  # Identical consecutive messages limit
 MUTE_DURATION = 3 * 60 * 60  # 3 hours in seconds for spam
-SHOOT_MUTE_DURATION = 10 * 60  # 10 minutes in seconds for getting shot
 XP_PROMOTE_THRESHOLD = 1500  # XP required for admin promotion
 
 # Allowed external links whitelist
@@ -84,7 +83,7 @@ def get_user_stats(user_id: int, username: str):
   """Gets or initializes stats for a user."""
   uid_str = str(user_id)
   if uid_str not in user_data:
-    user_data[uid_str] = {"xp": 0, "money": 0, "username": username or "Unknown"}
+    user_data[uid_str] = {"xp": 0, "money": 100, "username": username or "Unknown"}  # Start with $100 to gamble
   return user_data[uid_str]
 
 
@@ -144,25 +143,20 @@ def is_spam(uid: int, text: str) -> bool:
 
 
 async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Explains the rules and how to get VC permissions by playing."""
+  """Explains the rules and casino gameplay."""
   if not update.message:
     return
 
   rules_text = (
-      "📜 <b>MERCEDES BOT RULES & GAMEPLAY GUIDE</b> 📜\n\n"
+      "🎰 <b>MERCEDES CASINO & RULES GUIDE</b> 🎲\n\n"
       "1️⃣ <b>No Spamming / Telegram Links:</b> Drop spam or unauthorized links,"
-      " and Mercedes will delete your message and mute you for 3 hours with a"
-      " warning.\n\n"
-      "2️⃣ <b>How to Earn XP & Cash:</b> Play the mini-game commands to stack"
-      " your stats!\n"
-      "   • /slap (Reply to someone)\n"
-      "   • /punch (Reply to someone)\n"
-      "   • /rob (Steal cash/XP from other users — 50% success rate!)\n"
-      "   • /shoot (30% chance to hit your target; missers are safe, hits mute"
-      " them for 10 mins!)\n"
-      "   • /stats (Check your current XP and wallet)\n\n"
-      "3️⃣ <b>How to Get VC Permissions:</b> Grind your way up! Once you hit"
-      f" <b>{XP_PROMOTE_THRESHOLD} XP</b> through fighting and crime, Mercedes"
+      " and Mercedes will delete your message and mute you for 3 hours.\n\n"
+      "2️⃣ <b>Casino Commands & Gambling:</b> Stack your bag at the tables!\n"
+      "   • /dice <amount> (Roll a die: 1-3 is lose, 4-6 doubles your bet!)\n"
+      "   • /slots <amount> (Spin the slot machine for massive payouts)\n"
+      "   • /stats (Check your current cash and XP wallet)\n\n"
+      "3️⃣ <b>How to Get VC Permissions:</b> Hit the jackpot and grind your way up to"
+      f" <b>{XP_PROMOTE_THRESHOLD} XP</b> through gambling, and Mercedes"
       " will automatically promote you to an Admin with <b>Voice Chat</b>"
       " permissions! 🎙️✨"
   )
@@ -170,10 +164,8 @@ async def rules_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
   await update.message.reply_text(rules_text, parse_mode="HTML")
 
 
-async def handle_fight_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, action_type: str
-):
-  """Handles /slap or /punch commands."""
+async def dice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Allows users to gamble money on a dice roll."""
   message = update.message
   user = update.effective_user
   chat = update.effective_chat
@@ -181,39 +173,134 @@ async def handle_fight_action(
   if not message or not user or chat.type == "private":
     return
 
-  if not message.reply_to_message or not message.reply_to_message.from_user:
-    await message.reply_text(
-        f"Usage: Reply to someone's message with /{action_type} to hit them!"
-    )
+  if not context.args:
+    await message.reply_text("Usage: /dice <amount> (e.g., /dice 50)")
     return
 
-  target_user = message.reply_to_message.from_user
-
-  if target_user.id == user.id:
-    await message.reply_text("You can't hit yourself, dumbass.")
+  try:
+    bet = int(context.args[0])
+  except ValueError:
+    await message.reply_text("Please enter a valid number for your bet.")
     return
-  if target_user.is_bot:
-    await message.reply_text("Attacking a bot? Get a life.")
-    return
-
-  earned_xp = random.randint(50, 150)
-  earned_money = random.randint(10, 50)
 
   stats = get_user_stats(user.id, user.first_name)
-  stats["xp"] += earned_xp
-  stats["money"] += earned_money
-  save_user_data(user_data)
 
-  action_verb = "slapped" if action_type == "slap" else "punched"
-  reply_text = (
-      f"💥 {user.mention_html()} {action_verb} {target_user.mention_html()}!\n"
-      f"💰 Earned: **+${earned_money}** | ✨ XP: **+{earned_xp}** (Total XP:"
-      f" {stats['xp']})"
-  )
+  if bet <= 0:
+    await message.reply_text("You have to bet more than 0, dumbass.")
+    return
 
-  await message.reply_text(reply_text, parse_mode="HTML")
+  if stats["money"] < bet:
+    await message.reply_text(f"You're broke! You only have ${stats['money']} in your wallet.")
+    return
+
+  roll = random.randint(1, 6)
+  
+  if roll >= 4:
+    winnings = bet
+    stats["money"] += winnings
+    earned_xp = bet * 2
+    stats["xp"] += earned_xp
+    save_user_data(user_data)
+    await message.reply_text(
+        f"🎲 {user.mention_html()} rolled a <b>{roll}</b>!\n"
+        f"🎉 <b>YOU WIN!</b> Payout: +${winnings} | ✨ XP: +{earned_xp}\n"
+        f"💰 Balance: ${stats['money']}",
+        parse_mode="HTML",
+    )
+  else:
+    stats["money"] -= bet
+    earned_xp = max(10, bet // 2)
+    stats["xp"] += earned_xp
+    save_user_data(user_data)
+    await message.reply_text(
+        f"🎲 {user.mention_html()} rolled a <b>{roll}</b>...\n"
+        f"💸 <b>HOUSE WINS!</b> Lost: -${bet} | (At least you got +{earned_xp} XP)\n"
+        f"💰 Balance: ${stats['money']}",
+        parse_mode="HTML",
+    )
 
   # Check promotion threshold
+  await check_promotion(chat, user, stats)
+
+
+async def slots_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Slot machine mini-game."""
+  message = update.message
+  user = update.effective_user
+  chat = update.effective_chat
+
+  if not message or not user or chat.type == "private":
+    return
+
+  if not context.args:
+    await message.reply_text("Usage: /slots <amount> (e.g., /slots 50)")
+    return
+
+  try:
+    bet = int(context.args[0])
+  except ValueError:
+    await message.reply_text("Please enter a valid number for your bet.")
+    return
+
+  stats = get_user_stats(user.id, user.first_name)
+
+  if bet <= 0:
+    await message.reply_text("Bet a real amount, dummy.")
+    return
+
+  if stats["money"] < bet:
+    await message.reply_text(f"You don't got the funds! Wallet: ${stats['money']}.")
+    return
+
+  fruits = ["🍒", "🍋", "🍊", "🔔", "💎", "7️⃣"]
+  spin1 = random.choice(fruits)
+  spin2 = random.choice(fruits)
+  spin3 = random.choice(fruits)
+
+  slot_display = f"[ {spin1} | {spin2} | {spin3} ]"
+
+  if spin1 == spin2 == spin3:
+    multiplier = 10 if spin1 == "7️⃣" else 5
+    winnings = bet * multiplier
+    stats["money"] += winnings
+    earned_xp = winnings * 2
+    stats["xp"] += earned_xp
+    save_user_data(user_data)
+    await message.reply_text(
+        f"🎰 {user.mention_html()} spun the slots:\n{slot_display}\n\n"
+        f"🔥 <b>JACKPOT! ({multiplier}x)</b> Won: +${winnings} | ✨ XP: +{earned_xp}\n"
+        f"💰 Balance: ${stats['money']}",
+        parse_mode="HTML",
+    )
+  elif spin1 == spin2 or spin2 == spin3 or spin1 == spin3:
+    winnings = bet
+    stats["money"] += winnings
+    earned_xp = bet
+    stats["xp"] += earned_xp
+    save_user_data(user_data)
+    await message.reply_text(
+        f"🎰 {user.mention_html()} spun the slots:\n{slot_display}\n\n"
+        f"✨ <b>Two of a kind!</b> Won: +${winnings} | XP: +{earned_xp}\n"
+        f"💰 Balance: ${stats['money']}",
+        parse_mode="HTML",
+    )
+  else:
+    stats["money"] -= bet
+    earned_xp = 10
+    stats["xp"] += earned_xp
+    save_user_data(user_data)
+    await message.reply_text(
+        f"🎰 {user.mention_html()} spun the slots:\n{slot_display}\n\n"
+        f"❌ <b>You missed!</b> Lost: -${bet} | XP: +{earned_xp}\n"
+        f"💰 Balance: ${stats['money']}",
+        parse_mode="HTML",
+    )
+
+  await check_promotion(chat, user, stats)
+
+
+async def check_promotion(chat, user, stats):
+  """Checks if user crossed XP threshold for admin promotion."""
   if stats["xp"] >= XP_PROMOTE_THRESHOLD:
     try:
       member = await chat.get_member(user.id)
@@ -225,8 +312,8 @@ async def handle_fight_action(
             can_invite_users=True,
         )
         await chat.send_message(
-            f"🎉 Holy shit! {user.mention_html()} reached {XP_PROMOTE_THRESHOLD}"
-            " XP through violence and has been promoted to Admin with"
+            f"🎉 Holy shit! {user.mention_html()} hit {XP_PROMOTE_THRESHOLD}"
+            " XP at the casino tables and has been promoted to Admin with"
             " **Voice Call** permissions! 🎙️",
             parse_mode="HTML",
         )
@@ -234,148 +321,15 @@ async def handle_fight_action(
       print(f"Failed to promote user: {e}")
 
 
-async def slap_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  await handle_fight_action(update, context, "slap")
-
-
-async def punch_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  await handle_fight_action(update, context, "punch")
-
-
-async def shoot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Handles the /shoot command with a 30% chance to hit and 10-minute mute."""
-  message = update.message
-  user = update.effective_user
-  chat = update.effective_chat
-
-  if not message or not user or chat.type == "private":
-    return
-
-  if not message.reply_to_message or not message.reply_to_message.from_user:
-    await message.reply_text(
-        "Usage: Reply to someone's message with /shoot to pull out the heat!"
-    )
-    return
-
-  target_user = message.reply_to_message.from_user
-
-  if target_user.id == user.id:
-    await message.reply_text("You can't shoot yourself, are you suicidal?")
-    return
-  if target_user.is_bot:
-    await message.reply_text("Shooting a bot? Bullets bounce right off.")
-    return
-
-  hit_successful = random.random() < 0.30
-
-  if hit_successful:
-    until_date = int(time.time() + SHOOT_MUTE_DURATION)
-    permissions = ChatPermissions(can_send_messages=False)
-
-    try:
-      await chat.restrict_member(
-          target_user.id, permissions, until_date=until_date
-      )
-      await message.reply_text(
-          f"🔫 <b>BANG!</b> {user.mention_html()} shot"
-          f" {target_user.mention_html()} dead in their tracks! 🩸\n*(Muted for"
-          " 10 minutes)*",
-          parse_mode="HTML",
-      )
-    except Exception:
-      await message.reply_text(
-          f"🔫 {user.mention_html()} shot {target_user.mention_html()}, but"
-          " Mercedes couldn't mute them (Check bot admin permissions).",
-          parse_mode="HTML",
-      )
-  else:
-    await message.reply_text(
-        f"💨 {user.mention_html()} pulled the trigger on"
-        f" {target_user.mention_html()} and **missed completely**! They"
-        " scrambled away safely.",
-        parse_mode="HTML",
-    )
-
-
-async def rob_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Allows a user to attempt to steal money and XP from another user."""
-  message = update.message
-  user = update.effective_user
-  chat = update.effective_chat
-
-  if not message or not user or chat.type == "private":
-    return
-
-  if not message.reply_to_message or not message.reply_to_message.from_user:
-    await message.reply_text(
-        "Usage: Reply to someone's message with /rob to try and steal from"
-        " them!"
-    )
-    return
-
-  target_user = message.reply_to_message.from_user
-
-  if target_user.id == user.id:
-    await message.reply_text("You can't rob yourself, smart guy.")
-    return
-  if target_user.is_bot:
-    await message.reply_text("Robbing a bot? Good luck finding their wallet.")
-    return
-
-  thief_stats = get_user_stats(user.id, user.first_name)
-  target_stats = get_user_stats(target_user.id, target_user.first_name)
-
-  if target_stats["money"] <= 0 and target_stats["xp"] <= 0:
-    await message.reply_text(
-        f"{target_user.first_name} is broke and has no XP. Leave them alone!"
-    )
-    return
-
-  success = random.choice([True, False])
-
-  if success:
-    percentage = random.uniform(0.10, 0.30)
-    stolen_money = int(target_stats["money"] * percentage)
-    stolen_xp = int(target_stats["xp"] * percentage)
-
-    target_stats["money"] -= stolen_money
-    target_stats["xp"] -= stolen_xp
-
-    thief_stats["money"] += stolen_money
-    thief_stats["xp"] += stolen_xp
-    save_user_data(user_data)
-
-    await message.reply_text(
-        f"🥷 <b>Successful Heist!</b> {user.mention_html()} robbed"
-        f" {target_user.mention_html()} blind!\n💸 Stolen: **+${stolen_money}**"
-        f" | ✨ Stolen XP: **+{stolen_xp}**",
-        parse_mode="HTML",
-    )
-  else:
-    fine_money = 50
-    fine_xp = 50
-
-    thief_stats["money"] = max(0, thief_stats["money"] - fine_money)
-    thief_stats["xp"] = max(0, thief_stats["xp"] - fine_xp)
-    save_user_data(user_data)
-
-    await message.reply_text(
-        f"🚨 <b>Busted!</b> {user.mention_html()} tried to rob"
-        f" {target_user.mention_html()} and got caught lacking!\n❌ Fined:"
-        f" **-${fine_money}** | ✨ Lost XP: **-{fine_xp}**",
-        parse_mode="HTML",
-    )
-
-
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Checks current XP and money."""
+  """Checks current XP and wallet balance."""
   user = update.effective_user
   if not user or not update.message:
     return
 
   stats = get_user_stats(user.id, user.first_name)
   await update.message.reply_text(
-      f"📊 <b>Your Stats</b>\n👤 User: {user.first_name}\n💰 Money:"
+      f"📊 <b>Casino Wallet & Stats</b>\n👤 User: {user.first_name}\n💰 Cash:"
       f" ${stats['money']}\n✨ XP: {stats['xp']} / {XP_PROMOTE_THRESHOLD} XP to"
       " Voice Admin",
       parse_mode="HTML",
@@ -508,7 +462,7 @@ async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     welcome_text = (
         f"Welcome to the chat, {new_user.mention_html()}! 🎉 "
-        "Glad you made it in. Make sure you behave and check /rules before you do anything crazy."
+        "Glad you made it in. Make sure you behave, check /rules, and hit the casino tables!"
     )
     await chat.send_message(welcome_text, parse_mode="HTML")
 
@@ -617,13 +571,11 @@ def main():
   app.add_handler(CommandHandler("ban", ban_command))
   app.add_handler(CommandHandler("afk", toggle_afk))
   app.add_handler(CommandHandler("back", toggle_afk))
-  app.add_handler(CommandHandler("slap", slap_command))
-  app.add_handler(CommandHandler("punch", punch_command))
-  app.add_handler(CommandHandler("shoot", shoot_command))
-  app.add_handler(CommandHandler("rob", rob_command))
+  app.add_handler(CommandHandler("dice", dice_command))
+  app.add_handler(CommandHandler("slots", slots_command))
   app.add_handler(CommandHandler("stats", stats_command))
 
-  print("Mercedes is online, cooperative with admins, and fully armed!")
+  print("Mercedes casino is open, tables are hot, and security is locked down!")
   app.run_polling()
 
 
