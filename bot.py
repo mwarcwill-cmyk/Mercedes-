@@ -1,4 +1,65 @@
-from collections import defaultdict, deque
+
+    with open(DATA_FILE, "w") as f:
+      json.dump(data, f, indent=4)
+  except Exception:
+    pass
+
+
+user_data = load_user_data()
+
+# ==================== HELPER FUNCTIONS ====================
+
+
+def get_user_stats(user_id: int, username: str):
+  """Gets or initializes stats for a user."""
+  uid_str = str(user_id)
+  if uid_str not in user_data:
+    user_data[uid_str] = {"xp": 0, "money": 100, "username": username or "Unknown"}  # Start with $100 to gamble
+  return user_data[uid_str]
+
+
+def is_telegram_url(url: str) -> bool:
+  """Checks if a URL points to Telegram."""
+  try:
+    parsed = urlparse(url if "://" in url else "http://" + url)
+    domain = parsed.netloc.lower()
+    if domain.startswith("www."):
+      domain = domain[4:]
+    telegram_domains = {"t.me", "telegram.me", "telegram.dog", "telegra.ph"}
+    return domain in telegram_domains or any(
+        domain.endswith("." + d) for d in telegram_domains
+    )
+  except Exception:
+    return False
+
+
+async def contains_forbidden_link(msg) -> bool:
+  """Inspects message text/captions and entities for Telegram links."""
+  text = msg.text or msg.caption or ""
+  all_urls = []
+
+  entities = msg.entities or msg.caption_entities or []
+  for entity in entities:
+    if entity.type == "url":
+      all_urls.append(text[entity.offset : entity.offset + entity.length])
+    elif entity.type == "text_link":
+      all_urls.append(entity.url)
+
+  for url in all_urls:
+    if is_telegram_url(url):
+      return True
+
+  return False
+
+
+def is_spam(uid: int, text: str) -> bool:
+  """Tracks message frequency and identical repetition per user."""
+  now = time.time()
+  q = hits[uid]
+  q.append(now)
+
+  while q and now - q[0] > SPAM_WINDOW:
+    q.popleft(from collections import defaultdict, deque
 import json
 import os
 import random
@@ -83,7 +144,7 @@ def get_user_stats(user_id: int, username: str):
   """Gets or initializes stats for a user."""
   uid_str = str(user_id)
   if uid_str not in user_data:
-    user_data[uid_str] = {"xp": 0, "money": 100, "username": username or "Unknown"}  # Start with $100 to gamble
+    user_data[uid_str] = {"xp": 0, "money": 100, "username": username or "Unknown"}
   return user_data[uid_str]
 
 
@@ -219,7 +280,6 @@ async def dice_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
     )
 
-  # Check promotion threshold
   await check_promotion(chat, user, stats)
 
 
@@ -449,6 +509,138 @@ async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Greets new members when they join the group."""
+  chat = update.effective_chat
+  message = update.message
+  
+  if not message or not message.new_chat_members:
+    return
+
+  for new_user in message.new_chat_members:
+    if new_user.is_bot:
+      continue
+    
+    welcome_text = (
+        f"welcome to my lord gottis chat, {new_user.mention_html()}! 🎉"
+    )
+    await chat.send_message(welcome_text, parse_mode="HTML")
+
+
+# ==================== MESSAGE HANDLER ====================
+
+
+async def on_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Core message listener for triggers, link filtering, and anti-spam."""
+  msg = update.effective_message
+  chat = update.effective_chat
+  user = update.effective_user
+
+  if not msg or not user or chat.type == "private" or user.is_bot:
+    return
+
+  text = (msg.text or msg.caption or "").strip()
+  if not text:
+    return
+
+  text_lower = text.lower()
+
+  # 1. OWNER SPECIAL TRIGGER CHECK (@Thugginhard6630 / Gotti)
+  if user.username and user.username.lower() == OWNER_USERNAME:
+    if "mercedes" in text_lower:
+      worship_response = random.choice(OWNER_WORSHIP_PHRASES)
+      await msg.reply_text(worship_response)
+      return
+
+  # 2. ADMIN BEGGING TRIGGER CHECK
+  if (
+      "gotti get give me admin" in text_lower
+      or "where's my admin" in text_lower
+      or "gotti where's my admin" in text_lower
+      or "can i get admin" in text_lower
+  ):
+    await msg.reply_text("where's yo job at nigga")
+    return
+
+  # 3. Standard Custom Chat Triggers
+  for keyword, response in TRIGGERS.items():
+    if keyword in text_lower:
+      await msg.reply_text(response)
+      return
+
+  # 4. AFK Screening Trigger
+  if "gotti" in text_lower and afk_users:
+    await msg.reply_text(
+        "he doesn't feel like talking to you right now bitch I'll be taking his"
+        " calls"
+    )
+    return
+
+  # 5. Bypass checks for group admins/creators
+  try:
+    member = await chat.get_member(user.id)
+    if member.status in ("administrator", "creator"):
+      return
+  except Exception:
+    pass
+
+  # 6. Anti-Spam & Telegram Link Detection
+  has_telegram_spam = await contains_forbidden_link(msg)
+  is_frequent_spam = is_spam(user.id, text)
+
+  if not (has_telegram_spam or is_frequent_spam):
+    return
+
+  punishment_msg = "fuck yo mama u dork"
+
+  try:
+    await msg.delete()
+
+    until_date = int(time.time() + MUTE_DURATION)
+    permissions = ChatPermissions(can_send_messages=False)
+    await chat.restrict_member(user.id, permissions, until_date=until_date)
+
+    reason_note = (
+        "(Muted for 3 hours: Telegram link detected)"
+        if has_telegram_spam
+        else "(Muted for 3 hours: Spam detected)"
+    )
+
+    await chat.send_message(
+        f"{user.mention_html()} {punishment_msg} *{reason_note}*",
+        parse_mode="HTML",
+    )
+  except Exception:
+    await msg.reply_text(
+        f"{punishment_msg} (Note: Failed to mute user, check bot admin"
+        f" permissions.)"
+    )
+
+
+# ==================== MAIN APPLICATION ====================
+
+
+def main():
+  app = Application.builder().token(TOKEN).build()
+
+  # Register handlers
+  app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_msg))
+  app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
+  app.add_handler(CommandHandler("rules", rules_command))
+  app.add_handler(CommandHandler("unmute", unmute))
+  app.add_handler(CommandHandler("ban", ban_command))
+  app.add_handler(CommandHandler("afk", toggle_afk))
+  app.add_handler(CommandHandler("back", toggle_afk))
+  app.add_handler(CommandHandler("dice", dice_command))
+  app.add_handler(CommandHandler("slots", slots_command))
+  app.add_handler(CommandHandler("stats", stats_command))
+
+  print("Mercedes casino is open, tables are hot, and security is locked down!")
+  app.run_polling()
+
+
+if __name__ == "__main__":
+  main()
+sync def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
   """Greets new members when they join the group."""
   chat = update.effective_chat
   message = update.message
