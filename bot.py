@@ -403,27 +403,32 @@ async def toggle_afk(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
-  """Allows group admins to manually lift a mute early."""
+  """Allows group admins to manually lift a mute early via reply or user ID."""
   if not update.effective_user or not update.message:
     return
 
   chat = update.effective_chat
+  message = update.message
   member = await chat.get_member(update.effective_user.id)
 
   if member.status not in ("administrator", "creator"):
-    await update.message.reply_text(
+    await message.reply_text(
         "You don't have permission to use this command."
     )
     return
 
-  if not context.args:
-    await update.message.reply_text("Usage: /unmute <user_id>")
-    return
+  target_uid = None
 
-  try:
-    uid = int(context.args[0])
-  except ValueError:
-    await update.message.reply_text("Please provide a valid numeric User ID.")
+  if message.reply_to_message and message.reply_to_message.from_user:
+    target_uid = message.reply_to_message.from_user.id
+  elif context.args:
+    try:
+      target_uid = int(context.args[0])
+    except ValueError:
+      await message.reply_text("Please reply to a user or provide a valid numeric User ID.")
+      return
+  else:
+    await message.reply_text("Usage: Reply to a user with /unmute or use /unmute <user_id>")
     return
 
   try:
@@ -434,12 +439,78 @@ async def unmute(update: Update, context: ContextTypes.DEFAULT_TYPE):
         can_send_other_messages=True,
         can_add_web_page_previews=True,
     )
-    await chat.restrict_member(uid, permissions)
-    hits.pop(uid, None)
-    last_text.pop(uid, None)
-    await update.message.reply_text(f"Successfully unmuted user {uid}.")
+    await chat.restrict_member(target_uid, permissions)
+    hits.pop(target_uid, None)
+    last_text.pop(target_uid, None)
+    await message.reply_text(f"Successfully unmuted user {target_uid}.")
   except Exception as e:
-    await update.message.reply_text(f"Failed to unmute user: {e}")
+    await message.reply_text(f"Failed to unmute user: {e}")
+
+
+async def ban_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Allows admins or owner to ban a user by replying or using ID."""
+  message = update.message
+  user = update.effective_user
+  chat = update.effective_chat
+
+  if not message or not user or chat.type == "private":
+    return
+
+  try:
+    member = await chat.get_member(user.id)
+    if member.status not in ("administrator", "creator"):
+      await message.reply_text("You don't have permission to use this command.")
+      return
+  except Exception:
+    return
+
+  target_user = None
+
+  if message.reply_to_message and message.reply_to_message.from_user:
+    target_user = message.reply_to_message.from_user
+  elif context.args:
+    try:
+      uid = int(context.args[0])
+      member_obj = await chat.get_member(uid)
+      target_user = member_obj.user
+    except Exception:
+      pass
+
+  if not target_user:
+    await message.reply_text("Usage: Reply to a user's message with /ban or provide their User ID.")
+    return
+
+  if target_user.id == user.id:
+    await message.reply_text("You can't ban yourself.")
+    return
+
+  try:
+    await chat.ban_member(target_user.id)
+    await message.reply_text(
+        f"🔨 <b>{target_user.mention_html()}</b> has been banned from the chat.",
+        parse_mode="HTML",
+    )
+  except Exception as e:
+    await message.reply_text(f"Failed to ban user: {e}")
+
+
+async def welcome_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """Greets new members when they join the group."""
+  chat = update.effective_chat
+  message = update.message
+  
+  if not message or not message.new_chat_members:
+    return
+
+  for new_user in message.new_chat_members:
+    if new_user.is_bot:
+      continue
+    
+    welcome_text = (
+        f"Welcome to the chat, {new_user.mention_html()}! 🎉 "
+        "Glad you made it in. Make sure you behave and check /rules before you do anything crazy."
+    )
+    await chat.send_message(welcome_text, parse_mode="HTML")
 
 
 # ==================== MESSAGE HANDLER ====================
@@ -471,8 +542,10 @@ async def on_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
   if (
       "gotti get give me admin" in text_lower
       or "where's my admin" in text_lower
+      or "gotti where's my admin" in text_lower
+      or "can i get admin" in text_lower
   ):
-    await msg.reply_text("get a job yo pockets flat and u worried about admin")
+    await msg.reply_text("where's yo job at nigga")
     return
 
   # 3. Standard Custom Chat Triggers
@@ -538,8 +611,10 @@ def main():
 
   # Register handlers
   app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, on_msg))
+  app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_member))
   app.add_handler(CommandHandler("rules", rules_command))
   app.add_handler(CommandHandler("unmute", unmute))
+  app.add_handler(CommandHandler("ban", ban_command))
   app.add_handler(CommandHandler("afk", toggle_afk))
   app.add_handler(CommandHandler("back", toggle_afk))
   app.add_handler(CommandHandler("slap", slap_command))
