@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 
 # ==================== CONFIGURATION ====================
-TOKEN = "8874199870:AAE0Zb3lrTrap3621MPWL-eF0eXBmYTNfCE"
+TOKEN = "8874199870:AAH9FwJCMfMUthcjDkC3HSoF_Y0qdzfDLqY"
 SPAM_WINDOW = 8  # Seconds
 SPAM_COUNT = 4  # Messages allowed in window
 REPEAT_N = 3  # Identical consecutive messages limit
